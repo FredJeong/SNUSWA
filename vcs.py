@@ -23,4 +23,18 @@ def clear():
 	f.write(" "*100*30)
 	f.close()
 
+def clearRect(x,y,width,height):
+	for i in range(y, y + height):
+		write(x, i, " " * width)
+
+def drawRect(x,y,width,height,clear = True):
+	write(x, y, "-" * width)
+	write(x, y + height - 1, "-" * width)
+	for i in range(y + 1, y + height - 1):
+		if(clear):
+			write(x, i, "|" + " " * (width - 2) + "|")
+		else:
+			write(x, i, "|")
+			write(x + width - 1, i, "|")
+
 
