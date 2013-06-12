@@ -1,5 +1,3 @@
-# RFID reader YHH522 example 
-
 import sys
 import serial
 from os import system
@@ -39,26 +37,33 @@ valueDecCmd = [
 
 reply = []
 
+ERR_CHKSUM	= 0
+ERR_INPUT	= 1
+ERR_COMM	= 2
+
 # for windows
 #s = serial.Serial("COM20", baudrate=19200)
 # for linux
 s = serial.Serial("/dev/ttyUSB0", baudrate=19200)
 
+def process(cmd):
+	if(len(cmd) < 3):
+		return cmd
+	newCmd = cmd[0:2]
+	for ch in cmd[2:]:
+		newCmd.append(ch)
+		if(ch == 0xaa):
+			newCmd.append(0x00)
+	return newCmd
 
-
-def clearVCS():
-	f = open('/dev/vcs','w')
-	f.write(" "*1000)
-	f.close()
-
-def dualWrite(vcs,msg):
-	vcs.write(msg)
-	sys.stdout.write(msg)
 
 def sendCmd(cmd):	
 
+	time.sleep(0.1)
+
 	csum = 0
-	
+	cmd = process(cmd)
+
 	for c in cmd:
 		s.write(chr(c))
 		csum = csum ^ c
@@ -72,53 +77,53 @@ def sendCmd(cmd):
 	prevTime = time.time()
 	while(s.inWaiting() < 1) :
 		if(time.time() - prevTime > 1):
-			print "Timeout"
+			sys.stdout.write("Timeout")
 			return
 	
 	csum = 0
 	while(s.inWaiting() > 0):
 		r = s.read()
-		reply.append(r)
+		reply.append(ord(r))
 		csum = csum ^ ord(r)
 	
 	csum = csum ^ 0xaa ^ 0xbb 
 	
 	if(csum != 0):
-		print "Checksum incorrect"
+		sys.stdout.write("Checksum incorrect")
 	
 	return reply
 
 def check(response):
 	if(len(response) < 4):
-		print "Invalid response"
+		sys.stdout.write("Invalid response")
 		return False
 	csum = 0
 
 	for c in response[2:]:
-		csum = csum ^ ord(c)
+		csum = csum ^ c
 	if(csum != 0):
 		return False
 	return True
 
 
 def sendCmdD(cmd):
-	clearVCS()
-	f = open('/dev/vcs','w')
-	dualWrite(f, "Command to READER: ")
+
+	sys.stdout.write("Command to READER: ")
 	
 	csum = 0
-	
+	cmd = process(cmd)
+
 	for c in cmd:
 		s.write(chr(c))
 		csum = csum ^ c
-		dualWrite(f, hex(c) + " ")
+		sys.stdout.write(hex(c) + " ")
 	csum = csum ^ 0xaa ^ 0xbb
 	s.write(chr(csum))
-	dualWrite(f, hex(csum) + "\n")
+	sys.stdout.write(hex(csum) + "\n")
 
 
 
-	dualWrite(f, "Reply from READER: ")
+	sys.stdout.write("Reply from READER: ")
 	reply = []
 	
 
@@ -132,9 +137,9 @@ def sendCmdD(cmd):
 	
 	while(s.inWaiting() > 0):
 		r = s.read()
-		dualWrite(f, hex(ord(r)) + " ")
+		sys.stdout.write(hex(r) + " ")
 		reply.append(r)
-	dualWrite(f, "\n")
+	sys.stdout.write("\n")
 	f.close()
 	
 def flush():
@@ -143,147 +148,168 @@ def flush():
 		r = s.read()
 		reply.append(r)
 	
-	print [hex(ord(c)) for c in reply]
+	sys.stdout.write([hex(c) for c in reply])
+
+def readCardID():
+
+	ret = []
+	reply = sendCmd(cardIDCmd)
+
+	if(not check(reply)):
+		ret = [-1, ERR_CHKSUM]
+	elif(reply[2] == 0x06):
+		ret = [1] + reply[4:8]
+	else:
+		ret = [-1, ERR_COMM]
+
+	return ret
 
 def readBlock(blockNum):
-	clearVCS()
-	f = open('/dev/vcs','w')
-	dualWrite(f, "Read block " + hex(blockNum) + "\n")
-	
-	csum = 0
-	
 
-	cmd =  blockReadCmd[0:5] + [blockNum] + blockReadCmd[6:12]
+	ret = []
+
+	sys.stdout.write("Read block " + hex(blockNum) + "\n")
+
+	cmd = blockReadCmd[0:5] + [blockNum] + blockReadCmd[6:12]
 	reply = sendCmd(cmd)
 	
 	if(not check(reply)):
-		dualWrite(f, "Checksum Incorrect")
-	elif(ord(reply[2]) == 0x02):
-		dualWrite(f, "Read Failed")
+		sys.stdout.write("Checksum Incorrect")
+		ret = [-1, ERR_CHKSUM]
+	elif(reply[2]== 0x02):
+		sys.stdout.write("Read Failed")
+		ret = [-1, ERR_COMM]
 	else:
-		dualWrite(f, "Result : ")
+		sys.stdout.write("Result : ")
 		for c in reply[4:20]:
-			dualWrite(f, hex(ord(c)) + " ")		
+			sys.stdout.write(hex(c) + " ")
+		ret = [1] + reply[4:20]
 
-	dualWrite(f, "\n")
-	f.close()
+	sys.stdout.write("\n")
+	
+	return ret;
 
 def writeBlock(blockNum, data):
-	clearVCS()
-	f = open('/dev/vcs', 'w')
-	
-	if(len(data) != 16):
-		dualWrite(f, 'invalid data length\n')
-		f.close()
-		return
 
-	dualWrite(f, 'Writing to block ' + hex(blockNum) + ', data : ')
+	ret = []
+
+	sys.stdout.write('Writing to block ' + hex(blockNum) + ', \ndata : ')
 	for c in data:
-		dualWrite(f, hex(c) + ' ')
-	dualWrite(f, '\n')
+		sys.stdout.write(hex(c) + ' ')
+	sys.stdout.write('\n')
+
+	if(len(data) != 16):
+		sys.stdout.write('invalid data length\n')
+		ret = [-1, ERR_INPUT]
+		return ret
+
 	
 	cmd = blockWriteCmd[0:5] + [blockNum] + blockWriteCmd[6:12] + data
 	reply = sendCmd(cmd)
 	
 	if(not check(reply)):
-		dualWrite(f, "Checksum Incorrect")
-	elif(ord(reply[3]) == 0x22):
-		dualWrite(f, "Write successful")
-	elif(ord(reply[3]) == 0xDD):
-		dualWrite(f, "Write Failed")
-	
-	dualWrite(f, "\n")
-	f.close()
+		sys.stdout.write("Checksum Incorrect")
+		ret = [-1, ERR_CHKSUM]
+	elif(reply[3] == 0x22):
+		sys.stdout.write("Write successful")
+		ret = [1]
+	elif(reply[3] == 0xDD):
+		sys.stdout.write("Write Failed")
+		ret = [-1, ERR_COMM]
 
+	sys.stdout.write("\n")
+	return ret
 
 	
 def initValue(blockNum, value):
 	
-	clearVCS()
-	f = open('/dev/vcs', 'w')
 	
 	cmd = valueInitCmd[0:5] + [blockNum] + valueInitCmd[6:12] + [ord(ch) for ch in struct.pack('I',value)[0:4]]
 	
 	reply = sendCmd(cmd)
 	
-	dualWrite(f, 'Writing value to block ' + hex(blockNum) + ', value : ' + str(value) + '\n')
+	sys.stdout.write('Writing value to block ' + hex(blockNum) + ', value : ' + str(value) + '\n')
 	
-
+	ret = []
 	
 	if(not check(reply)):
-		dualWrite(f, "Checksum Incorrect")
-	elif(ord(reply[3]) == 0x23):
-		dualWrite(f, "Write successful")
-	elif(ord(reply[3]) == 0xDC):
-		dualWrite(f, "Write Failed")
-	
-	dualWrite(f, "\n")
-	f.close()
+		sys.stdout.write("Checksum Incorrect")
+		ret = [-1, ERR_CHKSUM]
+	elif(reply[3] == 0x23):
+		sys.stdout.write("Write successful")
+		ret = [1]
+	elif(reply[3] == 0xDC):
+		sys.stdout.write("Write Failed")
+		ret = [-1, ERR_COMM]
+	sys.stdout.write("\n")
+	return ret
 
 def readValue(blockNum):
-	clearVCS()
-	f = open('/dev/vcs', 'w')
 
 	cmd = valueReadCmd[0:5] + [blockNum] + valueReadCmd[6:]
 	reply = sendCmd(cmd)
 	
-	dualWrite(f, 'Reading value from block ' + hex(blockNum) + '\n')
+	sys.stdout.write('Reading value from block ' + hex(blockNum) + '\n')
 	
 	val = -1
+
+	ret = []
 	
 	if(not check(reply)):
-		dualWrite(f, "Checksum Incorrect")
-	elif(ord(reply[2]) == 0x02):
-		dualWrite(f, "Read Failed")
+		sys.stdout.write("Checksum Incorrect")
+		ret = [-1, ERR_CHKSUM]
+	elif(reply[2] == 0x02):
+		sys.stdout.write("Read Failed")
+		ret = [-1, ERR_COMM]
 	else:
-		val = struct.unpack('I',''.join(reply[4:8]))[0]
-		dualWrite(f, "Value = " + str(val))
-	dualWrite(f, "\n")
-	f.close()
-	return val
+		val = struct.unpack('I',''.join([chr(c) for c in reply[4:8]]))[0]
+		sys.stdout.write("Value = " + str(val))
+		ret = [1, val]
+	sys.stdout.write("\n")
+	return ret
 
 
 def incValue(blockNum, value):
-	
-	clearVCS()
-	f = open('/dev/vcs', 'w')
 	
 	cmd = valueIncCmd[0:5] + [blockNum] + valueIncCmd[6:12] + [ord(ch) for ch in struct.pack('I',value)[0:4]]
 	
 	reply = sendCmd(cmd)
 	
-	dualWrite(f, 'Increasing value in block ' + hex(blockNum) + ', amount : ' + str(value) + '\n')
+	sys.stdout.write('Increasing value in block ' + hex(blockNum) + ', amount : ' + str(value) + '\n')
 	
+	ret = []
 	
 	if(not check(reply)):
-		dualWrite(f, "Checksum Incorrect")
-	elif(ord(reply[3]) == 0x25):
-		dualWrite(f, "Increment successful")
-	elif(ord(reply[3]) == 0xDA):
-		dualWrite(f, "Increment Failed")
-	
-	dualWrite(f, "\n")
-	f.close()
+		sys.stdout.write("Checksum Incorrect")
+		ret = [-1, ERR_CHKSUM]
+	elif(reply[3] == 0x25):
+		sys.stdout.write("Increment successful")
+		ret = [1]
+	elif(reply[3] == 0xDA):
+		sys.stdout.write("Increment Failed")
+		ret = [-1, ERR_COMM]
+	sys.stdout.write("\n")
+	return ret
 
 def decValue(blockNum, value):
-	
-	clearVCS()
-	f = open('/dev/vcs', 'w')
-	
 	cmd = valueDecCmd[0:5] + [blockNum] + valueDecCmd[6:12] + [ord(ch) for ch in struct.pack('I',value)[0:4]]
 	
 	reply = sendCmd(cmd)
 	
-	dualWrite(f, 'Decreasing value in block ' + hex(blockNum) + ', amount : ' + str(value) + '\n')
+	sys.stdout.write('Decreasing value in block ' + hex(blockNum) + ', amount : ' + str(value) + '\n')
 	
+	ret = [-1]
 	
 	if(not check(reply)):
-		dualWrite(f, "Checksum Incorrect")
-	elif(ord(reply[3]) == 0x26):
-		dualWrite(f, "Write successful")
-	elif(ord(reply[3]) == 0xD9):
-		dualWrite(f, "Write Failed")
+		sys.stdout.write("Checksum Incorrect")
+		ret = [-1, ERR_CHKSUM]		
+	elif(reply[3] == 0x26):
+		sys.stdout.write("Write successful")
+		ret = [1]
+	elif(reply[3] == 0xD9):
+		sys.stdout.write("Write Failed")
+		ret = [-1, ERR_COMM]
 	
-	dualWrite(f, "\n")
-	f.close()
+	sys.stdout.write("\n")
+	return ret
 
