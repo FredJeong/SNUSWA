@@ -7,7 +7,7 @@ int main()
 	char buf[16];
 	const char* OUTFILE = "buttonEvents.bin";
 	FILE* buttonEvent = fopen("/dev/input/event0", "rb");
-	FILE* fout = fopen(OUTFILE, "wb");
+	FILE* fout;
 
 	const unsigned char SEARCH		= 0xD9;
 	const unsigned char VOLUMEUP	= 0x73;
@@ -18,7 +18,7 @@ int main()
 	const unsigned char BACK		= 0x9E;
 	
 	const char buttons[] = {HOME, ENTER, MENU, BACK, SEARCH, VOLUMEUP, VOLUMEDOWN};
-	char buttonStatus[7] = {0,};
+	char buttonStatus[8] = {0,0,0,0,0,0,0,0xff};
 	
 	while(1)
 	{
@@ -38,14 +38,13 @@ int main()
 				if(buf[10] == buttons[i])
 				{
 					buttonStatus[i] = buf[12] ;
-					fseek(fout,0,0);
-					fwrite(buttonStatus,1,7,fout);
-					fflush(fout);
+					fout = fopen(OUTFILE,"wb");
+					fwrite(buttonStatus,1,8,fout);
+					fclose(fout);
 				}
 			}
 		}
 	}
-	fclose(fout);
 	fclose(buttonEvent);
 	return 0;
 }

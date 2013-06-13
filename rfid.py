@@ -68,8 +68,22 @@ def process(cmd):
 			newCmd.append(0x00)
 	return newCmd
 
+def processInv(cmd):
+	if(len(cmd) < 3):
+		return cmd
+	newCmd = cmd[0:2]
+	aaOccurred = False
+	for ch in cmd[2:]:
+		if(aaOccurred):
+			aaOccurred = False
+			continue
+		newCmd.append(ch)
+		if(ch == 0xaa):
+			aaOccurred = True
+	return newCmd
 
-def sendCmd(cmd):	
+
+def sendCmd(cmd):
 
 	time.sleep(0.1)
 	flush()
@@ -166,7 +180,7 @@ def flush():
 def readCardID():
 
 	ret = []
-	reply = sendCmd(cardIDCmd)
+	reply = processInv(sendCmd(cardIDCmd))
 
 	if(not check(reply)):
 		ret = [-1, ERR_CHKSUM]
@@ -179,7 +193,7 @@ def readCardID():
 
 def sleepCard():
 	ret = []
-	reply = sendCmd(cardSleepCmd)
+	reply = processInv(sendCmd(cardSleepCmd))
 
 	if(not check(reply)):
 		ret = [-1, ERR_CHKSUM]
@@ -197,7 +211,7 @@ def readBlock(blockNum):
 	sys.stdout.write("Read block " + hex(blockNum) + "\n")
 
 	cmd = blockReadCmd[0:5] + [blockNum] + blockReadCmd[6:12]
-	reply = sendCmd(cmd)
+	reply = processInv(sendCmd(cmd))
 	
 	if(not check(reply)):
 		sys.stdout.write("Checksum Incorrect")
@@ -207,9 +221,9 @@ def readBlock(blockNum):
 		ret = [-1, ERR_COMM]
 	else:
 		sys.stdout.write("Result : ")
-		for c in reply[4:20]:
+		for c in reply[4:-1]:
 			sys.stdout.write(hex(c) + " ")
-		ret = [1] + reply[4:20]
+		ret = [1] + reply[4:-1]
 
 	sys.stdout.write("\n")
 	
@@ -222,7 +236,7 @@ def readSector(sectorNum):
 	sys.stdout.write("Read sector " + hex(sectorNum) + "\n")
 
 	cmd = sectorReadCmd[0:5] + [sectorNum] + sectorReadCmd[6:]
-	reply = sendCmd(cmd)
+	reply = processInv(sendCmd(cmd))
 	
 	if(not check(reply)):
 		sys.stdout.write("Checksum Incorrect")
@@ -256,7 +270,7 @@ def writeBlock(blockNum, data):
 		return ret
 
 	cmd = blockWriteCmd[0:5] + [blockNum] + blockWriteCmd[6:12] + data
-	reply = sendCmd(cmd)
+	reply = processInv(sendCmd(cmd))
 	
 	if(not check(reply)):
 		sys.stdout.write("Checksum Incorrect")
@@ -292,7 +306,7 @@ def writeSector(sectorNum, data):
 	
 	
 	cmd = sectorWriteCmd[0:5] + [sectorNum] + sectorWriteCmd[6:12] + data
-	reply = sendCmd(cmd)
+	reply = processInv(sendCmd(cmd))
 	
 	if(not check(reply)):
 		sys.stdout.write("Checksum Incorrect")
@@ -313,7 +327,7 @@ def initValue(blockNum, value):
 	
 	cmd = valueInitCmd[0:5] + [blockNum] + valueInitCmd[6:12] + [ord(ch) for ch in struct.pack('I',value)[0:4]]
 	
-	reply = sendCmd(cmd)
+	reply = processInv(sendCmd(cmd))
 	
 	sys.stdout.write('Writing value to block ' + hex(blockNum) + ', value : ' + str(value) + '\n')
 	
@@ -325,7 +339,7 @@ def initValue(blockNum, value):
 	elif(reply[3] == 0x23):
 		sys.stdout.write("Write successful")
 		ret = [1]
-	elif(reply[3] == 0xDB):
+	elif(reply[3] == 0xDC):
 		sys.stdout.write("Write Failed")
 		ret = [-1, ERR_COMM]
 	sys.stdout.write("\n")
@@ -334,7 +348,7 @@ def initValue(blockNum, value):
 def readValue(blockNum):
 
 	cmd = valueReadCmd[0:5] + [blockNum] + valueReadCmd[6:]
-	reply = sendCmd(cmd)
+	reply = processInv(sendCmd(cmd))
 	
 	sys.stdout.write('Reading value from block ' + hex(blockNum) + '\n')
 	
@@ -360,7 +374,7 @@ def incValue(blockNum, value):
 	
 	cmd = valueIncCmd[0:5] + [blockNum] + valueIncCmd[6:12] + [ord(ch) for ch in struct.pack('I',value)[0:4]]
 	
-	reply = sendCmd(cmd)
+	reply = processInv(sendCmd(cmd))
 	
 	sys.stdout.write('Increasing value in block ' + hex(blockNum) + ', amount : ' + str(value) + '\n')
 	
@@ -381,7 +395,7 @@ def incValue(blockNum, value):
 def decValue(blockNum, value):
 	cmd = valueDecCmd[0:5] + [blockNum] + valueDecCmd[6:12] + [ord(ch) for ch in struct.pack('I',value)[0:4]]
 	
-	reply = sendCmd(cmd)
+	reply = processInv(sendCmd(cmd))
 	
 	sys.stdout.write('Decreasing value in block ' + hex(blockNum) + ', amount : ' + str(value) + '\n')
 	

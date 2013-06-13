@@ -32,7 +32,7 @@ def finishScreen():
 
 	timeScreen()
 
-def busnumScreen(busnum1, busnum2, busnum3, busnum4):
+def busNumScreen(busnum1, busnum2, busnum3, busnum4):
 	basicSet()
 	vcs.write(45, 10,"select Bus number")
 	vcs.write(35, 20, "Select buss number button")
@@ -44,14 +44,11 @@ def busnumScreen(busnum1, busnum2, busnum3, busnum4):
 
 def chargeScreen(curMoney):
 
-	chargeMoney = 10000
-	nextMoney = chargeMoney+curMoney
-
 	basicSet()
 	vcs.write(48, 10, "charge")
 	vcs.write(35, 20, "Select money to charge")
 
-	drawButtonStr(5000, 10000, 20000, 30000)
+	drawButtonStr(1000, 5000, 10000, 20000)
 	drawButtonRect()
 
 	vcs.write(35, 25, "current Money  :  " +str(curMoney))
@@ -74,7 +71,7 @@ def runScreen(busStop, busnum):
 	
 	timeScreen()
 	
-def cardtagScreen(busStop, fee, busnum, error=False, errorMsg="error"):
+def cardTagScreen(busStop, fee, busnum, error=False, errorMsg="error"):
 
 	basicSet()
 	vcs.write(43, 10, "run at \""+str(busStop)+"\""+"("+str(busnum)+")")

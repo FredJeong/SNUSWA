@@ -12,10 +12,10 @@ currentStation = 1
 busNumber = "111111"
 
 BLOCK_HEADER	= 1
-BLOCK_CARDID	= 2
+BLOCK_CARDNO	= 2
 BLOCK_TRANS		= [8,9,10,12]
 BLOCK_MONEY		= 13
-BLOCKS = [BLOCK_HEADER, BLOCK_CARDID, BLOCK_MONEY] + BLOCK_TRANS
+BLOCKS = [BLOCK_HEADER, BLOCK_CARDNO, BLOCK_MONEY] + BLOCK_TRANS
 SECTORS = [0,2,3]
 
 STATUS_OK			= 1
@@ -28,14 +28,24 @@ ERROR_RETAG			= -2
 ERROR_NOMONEY		= -3
 ERROR_OVERCHARGED 	= -4
 
+ERROR_CARDNO		= [ord('F')]*16
+
 FEE_SCALE 			= [1, 0.7, 0.5, 0]
 blockBuffer			= [0] * 16
+
+outFile				= file					
 
 def goNext():
 	global currentStation
 	currentStation += 1
 	if(currentStation >= len(Stations)):
 		currentStation = 1
+
+def goPrev():
+	global currentStation
+	currentStation -= 1
+	if(currentStation <= 0):
+		currentStation = len(Stations) - 1
 
 def isTagged():
 	reply = readCardID()
@@ -95,14 +105,14 @@ def charge(amount):
 	return STATUS_OK
 
 
-def initCard(cardID, cardType, stationID, newValue = 0):
+def initCard(CARDNO, cardType, stationID, newValue = 0):
 	global blockBuffer
-	cardID = [ord(c) for c in cardID]
+	CARDNO = [ord(c) for c in CARDNO]
 	header = [0]*16
 	header[0] = cardType
 	blockBuffer[BLOCK_HEADER] = header
 	if(writeBlock(BLOCK_HEADER, header)[0] == ERROR_COMM): return ERROR_COMM
-	if(writeBlock(BLOCK_CARDID, cardID)[0] == ERROR_COMM): return ERROR_COMM
+	if(writeBlock(BLOCK_CARDNO, CARDNO)[0] == ERROR_COMM): return ERROR_COMM
 	if(writeBlock(BLOCK_TRANS[0], [0]*16)[0] == ERROR_COMM): return ERROR_COMM
 	if(writeBlock(BLOCK_TRANS[1], [0]*16)[0] == ERROR_COMM): return ERROR_COMM
 	if(writeBlock(BLOCK_TRANS[2], [0]*16)[0] == ERROR_COMM): return ERROR_COMM
@@ -204,6 +214,11 @@ def tagged(busNo, stationID):
 	if(sleepCard()[0] == ERROR_COMM): return ERROR_COMM
 	return result
 
+def writeRecordToFile(cardNo, record):
+	cardNo = ''.join([chr(c) for c in cardNo])
+	record = unpackData(record)
+	buf = "%16s%32s\n" % (cardNo, record)
+	outFile.write(buf)
 
 #precondition : not isReTagged() and not isOffBoard()
 def onboardTag(busNo, stationID, header, lastRecord, currentRecord, numTransport):
@@ -216,6 +231,7 @@ def onboardTag(busNo, stationID, header, lastRecord, currentRecord, numTransport
 		fee += 500
 		numTransport = 0
 		header = setTransportVector(header, [0]*4)
+		writeRecordToFile(blockBuffer[BLOCK_CARDNO], currentRecord)
 		if(writeBlock(BLOCK_HEADER, header)[0] == ERROR_COMM): return ERROR_COMM
 
 	if(numTransport > 0):
@@ -266,6 +282,8 @@ def offboardTag(busNo, stationID, header, currentRecord, numTransport):
 	elif(result == ERROR_NOMONEY): return ERROR_NOMONEY
 
 	currentRecord = repackData(currentRecord, secondFormat(elapsedSecond()), fee, stationID)
+	
+	writeRecordToFile(blockBuffer[BLOCK_CARDNO], currentRecord)
 
 	if(writeBlock(BLOCK_HEADER, header)[0] == ERROR_COMM): return ERROR_COMM
 	if(writeBlock(BLOCK_TRANS[numTransport], currentRecord)[0] == ERROR_COMM):
@@ -359,6 +377,33 @@ def setBusNo(busNo):
 	global busNumber
 	busNumber = busNo
 
+def main(busNos):
+	screen.busNumScreen(busNos[0],busNos[1],busNos[2],busNos[3])
+
+	while(True):
+		eventreader.updateButtonState()
+		busNumber = ""
+		for i in range(4):
+			if(eventreader.isButtonDown(i)): busNumber = busNos[i]
+		if(len(busNumber) > 0):
+			result = drive(busNumber, 1)
+			screen.busNumScreen(busNos[0],busNos[1],busNos[2],busNos[3])
+		if(eventreader.isButtonDown(Buttons.SEARCH)):
+			break
+		time.sleep(0.1)
+	vcs.clear()
+	vcs.drawRect(30,10,40,10)
+	vcs.write(48,14,"Bye!")
+	vcs.write(47,15,"-ECHO-")
+
+def getFileName():
+	now = time.localtime(time.time())
+	return "trans_%04d_%02d%02d_%02d%02d%02d" % (now.tm_year, now.tm_mon, now.tm_mday,
+		now.tm_hour, now.tm_min, now.tm_sec)
+
+
+
+
 def drive(busNo = busNumber, stationID = 1):
 	global blockBuffer
 	global currentStation
@@ -367,20 +412,102 @@ def drive(busNo = busNumber, stationID = 1):
 	prevTime2 = int(time.time())
 	errorFlag = 0
 	screen.runScreen(Stations[currentStation], busNo)
+	backup = [0]*4
+
+	global outFile
+	outFile = open(getFileName(), "w")
 	while(True):
+		eventreader.updateButtonState()
+
 		errorFlag = 0
-		if(time.time() - prevTime > 10):
-			goNext()
-			prevTime = int(time.time())
-			screen.runScreen(Stations[currentStation], busNo)
 		if(int(time.time()) != prevTime2):
 			prevTime2 = int(time.time())
 			screen.timeScreen()
 
+		if(eventreader.isButtonDown(Buttons.VOLUMEDOWN)):
+			goPrev()
+			screen.runScreen(Stations[currentStation], busNo)
+
+		if(eventreader.isButtonDown(Buttons.VOLUMEUP)):
+			goNext()
+			screen.runScreen(Stations[currentStation], busNo)
+
+		if(eventreader.isButtonDown(Buttons.BACK)):
+			outFile.close()
+			return 0
+
+
+		if(eventreader.isButtonDown(Buttons.MENU)):
+			rfid.flush()
+			vcs.write(35, 20, "Please tag your bus card!")
+			while True:
+				while(isTagged()[0] != STATUS_OK): time.sleep(0.1)
+
+				for i in range(3):
+					blockBuffer[BLOCK_HEADER] = readBlock(BLOCK_HEADER)
+					if(blockBuffer[BLOCK_HEADER][0] != ERROR_COMM):
+						blockBuffer[BLOCK_HEADER] = blockBuffer[BLOCK_HEADER][1:]
+						break
+					time.sleep(0.1)
+
+				for i in range(3):
+					[res,Money] = readValue(BLOCK_MONEY)
+					if(res != ERROR_COMM): break
+					time.sleep(0.1)
+				if(blockBuffer[BLOCK_HEADER][0] == ERROR_COMM or res == ERROR_COMM):
+					errorFlag = ERROR_COMM
+					vcs.write(35, 20, "READ ERROR"                        )
+					print "\n<READ ERROR>\n"
+					rfid.sleepCard()
+					time.sleep(2)
+					screen.runScreen(Stations[currentStation], busNo)
+					break
+
+				screen.chargeScreen(Money)
+				while True:
+					eventreader.updateButtonState()
+					amount = 0
+					if(eventreader.isButtonDown(Buttons.HOME)): 
+						amount = 1000
+					elif(eventreader.isButtonDown(Buttons.ENTER)): 
+						amount = 5000
+					elif(eventreader.isButtonDown(Buttons.MENU)): 
+						amount = 10000
+					elif(eventreader.isButtonDown(Buttons.BACK)):
+						amount = 20000
+					else:
+						time.sleep(0.1)
+						continue
+					res = topUp(amount, currentStation)
+					if(res != STATUS_OK):
+						errorFlag = res
+						vcs.write(35, 20, "WRITE ERROR. Rolling back..          ")
+						print "\n<WRITE ERROR. Rolling back..>\n"
+
+						for i in range(3):
+							res = writeBlock(BLOCK_HEADER, blockBuffer[BLOCK_HEADER])
+							if(res != ERROR_COMM): break
+							time.sleep(0.1)
+
+						writeRecordToFile(ERROR_CARDNO, 
+							packOnboardData("000000",secondFormat(elapsedSecond()), -res,0))
+
+						rfid.sleepCard()
+						time.sleep(2)
+						screen.runScreen(Stations[currentStation], busNo)
+						break
+					if(errorFlag == 0):
+						screen.chargeFinishScreen(Money + amount)
+					break
+				time.sleep(3)
+				screen.runScreen(Stations[currentStation], busNo)
+				rfid.sleepCard()
+				break
+					
+
 		if(isTagged()[0] == STATUS_OK):
 			rfid.flush()
-			backup = [0]*4
-			screen.cardtagScreen(Stations[currentStation], 0, busNo,
+			screen.cardTagScreen(Stations[currentStation], 0, busNo,
 				True, "Tagging...Wait")
 
 			for sectorIdx in SECTORS:
@@ -401,21 +528,32 @@ def drive(busNo = busNumber, stationID = 1):
 
 			result = tagged(busNo, currentStation)
 			if(result == ERROR_COMM):
+				errorFlag = result
 				print "\n<ERROR. Try rolling-back>\n"
-				screen.cardtagScreen(Stations[currentStation], 0, busNo,
+				screen.cardTagScreen(Stations[currentStation], 0, busNo,
 					True, "ERROR. Try rolling-back")
 				for sectorIdx in SECTORS:
 					for i in range(3):
 						print sectorIdx
 						if(writeSector(sectorIdx, backup[sectorIdx])[0] != -1): break
+				writeRecordToFile(ERROR_CARDNO, 
+					packOnboardData("000000",secondFormat(elapsedSecond()), -result,0))
 			elif(result == ERROR_NOMONEY):
-				screen.cardtagScreen(Stations[currentStation], 0, busNo,
+				errorFlag = result
+				screen.cardTagScreen(Stations[currentStation], 0, busNo,
 					True, "Not enough minerals.")
-				time.sleep(1)
+				print "\n<Not enough minerals.>\n"
+				writeRecordToFile(ERROR_CARDNO, 
+					packOnboardData("000000",secondFormat(elapsedSecond()), -result,0))
+				time.sleep(2)
 			elif(result == ERROR_RETAG):
-				screen.cardtagScreen(Stations[currentStation], 0, busNo,
+				errorFlag = result
+				screen.cardTagScreen(Stations[currentStation], 0, busNo,
 					True, "Retagged.")
-				time.sleep(1)
+				print "\n<Retagged.>\n"
+				writeRecordToFile(ERROR_CARDNO, 
+					packOnboardData("000000",secondFormat(elapsedSecond()), -result,0))
+				time.sleep(2)
 
 
 			elif(result[0] > 0):
@@ -427,12 +565,20 @@ def drive(busNo = busNumber, stationID = 1):
 					msg += ", Bye!"
 				else:
 					msg +=". Welcome!"
-				screen.cardtagScreen(Stations[currentStation], result[1], busNo,
+				screen.cardTagScreen(Stations[currentStation], result[1], busNo,
 					True, msg)
-				time.sleep(1)
+				print "\n<" + msg + ">\n"
+				time.sleep(2)
 
 
 			screen.runScreen(Stations[currentStation], busNo)
 
+		if(int(time.time()) - prevTime > 300):
+			prevTime = int(time.time())
+			outFile.close()
+			outFile = open(getFileName, "w")
 
-		else: time.sleep(0.1)
+
+		time.sleep(0.1)
+
+main(["1550-1","5511","650","5528"])

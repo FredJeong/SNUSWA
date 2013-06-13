@@ -17,14 +17,13 @@ class Buttons:
 	VOLUMEDOWN	= 6
 
 
-buttonEvent = open('buttonEvents.bin','rb')
-screenEvent = open('screenEvents.bin','rb')
-
 def getButtonState():
-	buttonEvent.seek(0)
+	buttonEvent = open('buttonEvents.bin','rb')
 	c = buttonEvent.read(7)
 	if(len(c) < 7):
 		return [-1]
+		buttonEvent.close()
+	buttonEvent.close()
 	return [ord(state) for state in c]
 
 def isButtonDown(btn_id):
@@ -65,7 +64,7 @@ def updateButtonState():
 	return 0
 
 def getScreenState():
-	screenEvent.seek(0)
+	screenEvent = open('screenEvents.bin','rb')
 	c = screenEvent.read(5)
 	if(len(c) < 5):
 		return [-1]
@@ -75,6 +74,7 @@ def getScreenState():
 		pressed = 1
 	else:
 		pressed = 0
+	screenEvent.close()
 	return [x, y, pressed]
 
 def isTouchDown():
@@ -103,3 +103,4 @@ def updateScreenState():
 
 	prevScreenState = currentScreenState
 	return 0
+	
