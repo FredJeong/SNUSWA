@@ -9,6 +9,7 @@ keyA = [0xff] * 6
 echoCmd = [0xaa, 0xbb, 0x9, 0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7]
 beepCmd = [0xaa, 0xbb, 0x3, 0x14, 0x13]
 cardIDCmd = [0xaa, 0xbb, 0x2, 0x20]
+cardSleepCmd = [0xaa, 0xbb, 0x02, 0x12]
 cardTypeCmd = [0xaa, 0xbb, 0x02, 0x19]
 
 blockReadCmd = [
@@ -33,7 +34,18 @@ valueIncCmd = [
 valueDecCmd = [
 	0xaa, 0xbb, 0x0e, 0x26, 0x00, 0x08,
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-	0x00, 0x00, 0x04, 0x00]	
+	0x00, 0x00, 0x04, 0x00]
+sectorReadCmd = [
+	0xaa, 0xbb, 0x0a, 0x2a, 0x00, 0x01,
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff]
+sectorWriteCmd = [
+	0xaa, 0xbb, 0x3a, 0x2b, 0x00, 0x01,
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 
+	0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 
+	0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33]
+
+
 
 reply = []
 
@@ -60,6 +72,7 @@ def process(cmd):
 def sendCmd(cmd):	
 
 	time.sleep(0.1)
+	flush()
 
 	csum = 0
 	cmd = process(cmd)
@@ -73,7 +86,6 @@ def sendCmd(cmd):
 	reply = []
 	
 
-	time.sleep(0.1)
 	prevTime = time.time()
 	while(s.inWaiting() < 1) :
 		if(time.time() - prevTime > 1):
@@ -82,10 +94,11 @@ def sendCmd(cmd):
 	
 	csum = 0
 	while(s.inWaiting() > 0):
-		r = s.read()
-		reply.append(ord(r))
-		csum = csum ^ ord(r)
-	
+		while(s.inWaiting() > 0):
+			r = s.read()
+			reply.append(ord(r))
+			csum = csum ^ ord(r)
+		time.sleep(0.05)
 	csum = csum ^ 0xaa ^ 0xbb 
 	
 	if(csum != 0):
@@ -148,7 +161,7 @@ def flush():
 		r = s.read()
 		reply.append(r)
 	
-	sys.stdout.write([hex(c) for c in reply])
+	sys.stdout.write(''.join([hex(ord(c)) for c in reply]))
 
 def readCardID():
 
@@ -159,6 +172,19 @@ def readCardID():
 		ret = [-1, ERR_CHKSUM]
 	elif(reply[2] == 0x06):
 		ret = [1] + reply[4:8]
+	else:
+		ret = [-1, ERR_COMM]
+
+	return ret
+
+def sleepCard():
+	ret = []
+	reply = sendCmd(cardSleepCmd)
+
+	if(not check(reply)):
+		ret = [-1, ERR_CHKSUM]
+	elif(reply[3] == 0x12):
+		ret = [1]
 	else:
 		ret = [-1, ERR_COMM]
 
@@ -189,9 +215,35 @@ def readBlock(blockNum):
 	
 	return ret;
 
-def writeBlock(blockNum, data):
+def readSector(sectorNum):
 
 	ret = []
+
+	sys.stdout.write("Read sector " + hex(sectorNum) + "\n")
+
+	cmd = sectorReadCmd[0:5] + [sectorNum] + sectorReadCmd[6:]
+	reply = sendCmd(cmd)
+	
+	if(not check(reply)):
+		sys.stdout.write("Checksum Incorrect")
+		ret = [-1, ERR_CHKSUM]
+	elif(reply[2]== 0x02):
+		sys.stdout.write("Read Failed")
+		ret = [-1, ERR_COMM]
+	else:
+		sys.stdout.write("Result : ")
+		for c in reply[5:-1]:
+			sys.stdout.write(hex(c) + " ")
+		ret = [1] + reply[5:-1]
+
+	sys.stdout.write("\n")
+	
+	return ret;
+
+
+def writeBlock(blockNum, data):
+
+	ret = [-1]
 
 	sys.stdout.write('Writing to block ' + hex(blockNum) + ', \ndata : ')
 	for c in data:
@@ -199,11 +251,10 @@ def writeBlock(blockNum, data):
 	sys.stdout.write('\n')
 
 	if(len(data) != 16):
-		sys.stdout.write('invalid data length\n')
+		sys.stdout.write('invalid data length : ' + str(len(data)) + '\n')
 		ret = [-1, ERR_INPUT]
 		return ret
 
-	
 	cmd = blockWriteCmd[0:5] + [blockNum] + blockWriteCmd[6:12] + data
 	reply = sendCmd(cmd)
 	
@@ -214,6 +265,42 @@ def writeBlock(blockNum, data):
 		sys.stdout.write("Write successful")
 		ret = [1]
 	elif(reply[3] == 0xDD):
+		sys.stdout.write("Write Failed")
+		ret = [-1, ERR_COMM]
+
+
+	sys.stdout.write("\n")
+	return ret
+
+def writeSector(sectorNum, data):
+
+	ret = [-1]
+
+	sys.stdout.write('Writing to sector ' + hex(sectorNum) + ', \ndata : ')
+	for c in data:
+		sys.stdout.write(hex(c) + ' ')
+	sys.stdout.write('\n')
+
+	if(sectorNum <= 0x20 and len(data) != 48):
+		sys.stdout.write('invalid data length : ' + str(len(data)) + '\n')
+		ret = [-1, ERR_INPUT]
+		return ret
+	elif(sectorNum > 0x20 and sectorNum <= 0x29 and len(data) != 240):
+		sys.stdout.write('invalid data length : ' + str(len(data)) + '\n')
+		ret = [-1, ERR_INPUT]
+		return ret
+	
+	
+	cmd = sectorWriteCmd[0:5] + [sectorNum] + sectorWriteCmd[6:12] + data
+	reply = sendCmd(cmd)
+	
+	if(not check(reply)):
+		sys.stdout.write("Checksum Incorrect")
+		ret = [-1, ERR_CHKSUM]
+	elif(reply[3] == 0x2B):
+		sys.stdout.write("Write successful")
+		ret = [1]
+	elif(reply[3] == 0xD4):
 		sys.stdout.write("Write Failed")
 		ret = [-1, ERR_COMM]
 
@@ -238,7 +325,7 @@ def initValue(blockNum, value):
 	elif(reply[3] == 0x23):
 		sys.stdout.write("Write successful")
 		ret = [1]
-	elif(reply[3] == 0xDC):
+	elif(reply[3] == 0xDB):
 		sys.stdout.write("Write Failed")
 		ret = [-1, ERR_COMM]
 	sys.stdout.write("\n")

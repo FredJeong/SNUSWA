@@ -1,21 +1,27 @@
-from rfid import writeBlock, readBlock, readValue, initValue, incValue, decValue, readCardID
-#import vcs
-#import eventreader
+from rfid import writeBlock, readBlock, readValue, initValue, incValue, decValue, readCardID, sleepCard, readSector, writeSector
+import rfid
+import vcs
+import eventreader
 import struct
 import time
-from stations import Station
+from stations import Stations
+from eventreader import Buttons
+import screen
 
-currentStation = 0
-
+currentStation = 1
+busNumber = "111111"
 
 BLOCK_HEADER	= 1
 BLOCK_CARDID	= 2
 BLOCK_TRANS		= [8,9,10,12]
 BLOCK_MONEY		= 13
+BLOCKS = [BLOCK_HEADER, BLOCK_CARDID, BLOCK_MONEY] + BLOCK_TRANS
+SECTORS = [0,2,3]
 
 STATUS_OK			= 1
 STATUS_NOOFFTAG		= 2
 STATUS_TRANSPORT	= 4
+STATUS_GETOFF		= 8
 
 ERROR_COMM			= -1
 ERROR_RETAG			= -2
@@ -23,11 +29,13 @@ ERROR_NOMONEY		= -3
 ERROR_OVERCHARGED 	= -4
 
 FEE_SCALE 			= [1, 0.7, 0.5, 0]
+blockBuffer			= [0] * 16
 
 def goNext():
+	global currentStation
 	currentStation += 1
-	if(currentStation >= len(Station)):
-		currentStation = 0
+	if(currentStation >= len(Stations)):
+		currentStation = 1
 
 def isTagged():
 	reply = readCardID()
@@ -40,22 +48,22 @@ def topUp(amount, stationID):
 
 	tm = time.localtime(time.time())
 	
-	value = readValue(9)
+	value = readValue(BLOCK_MONEY)
 	if(value[0] == ERROR_COMM):	return ERROR_COMM
 	
 	value = value[1]
 
 	if(value + amount > 500000): return ERROR_COMM
 	
-	header = readBlock(BLOCK_HEADER);
-	if(header[0] == ERROR_COMM): return ERROR_COMM
-	header = header[1:]
+	header = blockBuffer[BLOCK_HEADER]
 	dateFormat = "%02d%02d%02d%02d%02d" % (tm.tm_year %100,
 		tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min)
+	
+
 	header[1:5] = [ord(ch) for ch in struct.pack('>I',value + amount)]
 	header[5:15] = [ord(ch) for ch in dateFormat]
 	header[15] = stationID
-	print header
+	
 	if(writeBlock(BLOCK_HEADER, header)[0] == ERROR_COMM): return ERROR_COMM
 
 	if(incValue(BLOCK_MONEY, amount)[0] == ERROR_COMM): return ERROR_COMM
@@ -64,7 +72,7 @@ def topUp(amount, stationID):
 
 #Charge amount from card
 def charge(amount):
-
+	global blockBuffer
 
 	tm = time.localtime(time.time())
 	
@@ -75,9 +83,7 @@ def charge(amount):
 
 	if(value - amount < 0): return ERROR_NOMONEY
 	
-	header = readBlock(BLOCK_HEADER);
-	if(header[0] == ERROR_COMM): return ERROR_COMM
-	header = header[1:]
+	header = blockBuffer[BLOCK_HEADER]
 	dateFormat = "%02d%02d%02d%02d%02d" % (tm.tm_year %100,
 		tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min)
 	header[1:5] = [ord(ch) for ch in struct.pack('>I',value - amount)]
@@ -90,9 +96,11 @@ def charge(amount):
 
 
 def initCard(cardID, cardType, stationID, newValue = 0):
+	global blockBuffer
 	cardID = [ord(c) for c in cardID]
 	header = [0]*16
 	header[0] = cardType
+	blockBuffer[BLOCK_HEADER] = header
 	if(writeBlock(BLOCK_HEADER, header)[0] == ERROR_COMM): return ERROR_COMM
 	if(writeBlock(BLOCK_CARDID, cardID)[0] == ERROR_COMM): return ERROR_COMM
 	if(writeBlock(BLOCK_TRANS[0], [0]*16)[0] == ERROR_COMM): return ERROR_COMM
@@ -129,9 +137,8 @@ def setTransportVector(header, vector):
 	return header
 
 def getTransportRecord(index):
-	record = readBlock(BLOCK_TRANS[index])
-	if(record[0] == ERROR_COMM): return ERROR_COMM
-	record = record[1:]
+	global blockBuffer
+	record = blockBuffer[BLOCK_TRANS[index]]
 	return record
 
 def lastOffTagged(record):
@@ -164,12 +171,11 @@ def isOffBoard(record, busNo, stationID):
 
 
 def tagged(busNo, stationID):
+	global blockBuffer
 
-	print "Tagged on station " + Station[stationID-1] + ", bus No. " + busNo
+	print "\n<Tagged on station " + Stations[stationID] + ", bus No. " + busNo + ">\n" 
 
-	header = readBlock(BLOCK_HEADER)
-	if(header[0] == ERROR_COMM): return ERROR_COMM
-	header = header[1:]
+	header = blockBuffer[BLOCK_HEADER]
 
 	vector = getTransportVector(header)
 
@@ -183,19 +189,21 @@ def tagged(busNo, stationID):
 
 	if(numTransport > 0): 
 		lastRecord = getTransportRecord(numTransport - 1)
-		if(lastRecord == ERROR_COMM): return ERROR_COMM
 	currentRecord = getTransportRecord(numTransport)
-	if(currentRecord == ERROR_COMM): 
-		return ERROR_COMM
 
 	if(isReTagged(currentRecord, busNo, stationID)): 
-		print "Retagged"
+		print "\n<Retagged>\n"
 		return ERROR_RETAG
 	if(isOffBoard(currentRecord, busNo, stationID)): 
-		print "off_board"
-		return offboardTag(busNo, stationID, header, currentRecord, numTransport)
-	print "on_board"
-	return onboardTag(busNo, stationID, header, lastRecord, currentRecord, numTransport)
+		print "\n<off_board>\n"
+		result = offboardTag(busNo, stationID, header, currentRecord, numTransport)
+	else:
+		print "\n<on_board>\n"
+		result = onboardTag(busNo, stationID, header, lastRecord, currentRecord, numTransport)
+	if(result == ERROR_COMM): return ERROR_COMM
+	if(sleepCard()[0] == ERROR_COMM): return ERROR_COMM
+	return result
+
 
 #precondition : not isReTagged() and not isOffBoard()
 def onboardTag(busNo, stationID, header, lastRecord, currentRecord, numTransport):
@@ -219,20 +227,25 @@ def onboardTag(busNo, stationID, header, lastRecord, currentRecord, numTransport
 			header = setTransportVector(header, [0]*4)
 			if(writeBlock(BLOCK_HEADER, header)[0] == ERROR_COMM): return ERROR_COMM
 
-	fee *= FEE_SCALE[getUserType(header)]
+	fee = int(fee * FEE_SCALE[getUserType(header)])
+
+	result = charge(fee)
+	if(result == ERROR_COMM): return ERROR_COMM
+	elif(result == ERROR_NOMONEY): return ERROR_NOMONEY
 
 	currentRecord = packOnboardData(busNo, secondFormat(elapsedSecond()), fee, stationID)
 
 	if(writeBlock(BLOCK_TRANS[numTransport], currentRecord)[0] == ERROR_COMM): 
 		return ERROR_COMM
 
-	if(charge(fee) == ERROR_COMM): return ERROR_COMM
 
-	return [STATUS_OK + ret, currentRecord]
+	
+
+	return [STATUS_OK + ret,  fee, getUserType(header), currentRecord]
 
 def calculateFee(record, stationID):
 	onStation = record[13]
-	diff = (stationID - onStation) % len(Station)
+	diff = (stationID - onStation) % len(Stations)
 	if(diff < 5): return 0
 	return (diff - 5) * 100
 
@@ -245,7 +258,12 @@ def offboardTag(busNo, stationID, header, currentRecord, numTransport):
 		vector[i] = 1
 	header = setTransportVector(header, vector)
 
-	fee = calculateFee(currentRecord, stationID) * FEE_SCALE[getUserType(header)]
+	fee = int(calculateFee(currentRecord, stationID) * FEE_SCALE[getUserType(header)])
+
+
+	result = charge(fee)
+	if(result == ERROR_COMM): return ERROR_COMM
+	elif(result == ERROR_NOMONEY): return ERROR_NOMONEY
 
 	currentRecord = repackData(currentRecord, secondFormat(elapsedSecond()), fee, stationID)
 
@@ -253,9 +271,9 @@ def offboardTag(busNo, stationID, header, currentRecord, numTransport):
 	if(writeBlock(BLOCK_TRANS[numTransport], currentRecord)[0] == ERROR_COMM):
 		return ERROR_COMM
 
-	if(charge(fee) == ERROR_COMM): return ERROR_COMM
 
-	return STATUS_OK
+
+	return [STATUS_GETOFF + STATUS_OK, fee, getUserType(header), currentRecord]
 
 def secondFormat(seconds):
 	return "%02d%02d%02d" % (int(seconds / 60 / 60), int(seconds / 60) % 60, seconds % 60)
@@ -337,7 +355,84 @@ def unpackData(packed):
 
 	return busNo + onTime + feeBasic + onstationID + offTime + feeAdd + offstationID
 
-def drive():
+def setBusNo(busNo):
+	global busNumber
+	busNumber = busNo
+
+def drive(busNo = busNumber, stationID = 1):
+	global blockBuffer
+	global currentStation
+	currentStation = stationID
+	prevTime = int(time.time())
+	prevTime2 = int(time.time())
+	errorFlag = 0
+	screen.runScreen(Stations[currentStation], busNo)
 	while(True):
+		errorFlag = 0
+		if(time.time() - prevTime > 10):
+			goNext()
+			prevTime = int(time.time())
+			screen.runScreen(Stations[currentStation], busNo)
+		if(int(time.time()) != prevTime2):
+			prevTime2 = int(time.time())
+			screen.timeScreen()
+
 		if(isTagged()[0] == STATUS_OK):
-			tagged("34",4)
+			rfid.flush()
+			backup = [0]*4
+			screen.cardtagScreen(Stations[currentStation], 0, busNo,
+				True, "Tagging...Wait")
+
+			for sectorIdx in SECTORS:
+				for i in range(3):
+					sector = readSector(sectorIdx)
+					if(sector[0] != -1): break
+					if (i == 2):
+						errorFlag = ERROR_COMM
+				backup[sectorIdx] = sector[1:]
+				if(errorFlag < 0): 
+					break
+			if(errorFlag < 0): continue
+
+			for blockIdx in BLOCKS:
+				sectorIdx = int(blockIdx / 4)
+				offset = blockIdx % 4
+				blockBuffer[blockIdx] = backup[sectorIdx][offset*16:offset*16+16]
+
+			result = tagged(busNo, currentStation)
+			if(result == ERROR_COMM):
+				print "\n<ERROR. Try rolling-back>\n"
+				screen.cardtagScreen(Stations[currentStation], 0, busNo,
+					True, "ERROR. Try rolling-back")
+				for sectorIdx in SECTORS:
+					for i in range(3):
+						print sectorIdx
+						if(writeSector(sectorIdx, backup[sectorIdx])[0] != -1): break
+			elif(result == ERROR_NOMONEY):
+				screen.cardtagScreen(Stations[currentStation], 0, busNo,
+					True, "Not enough minerals.")
+				time.sleep(1)
+			elif(result == ERROR_RETAG):
+				screen.cardtagScreen(Stations[currentStation], 0, busNo,
+					True, "Retagged.")
+				time.sleep(1)
+
+
+			elif(result[0] > 0):
+				print "\n<Tagging success>\n"
+				msg = "Tagging success"
+				if(result[0] & STATUS_NOOFFTAG > 0): msg = "NOT TAGGED FOR LAST GETOFF"
+				if(result[0] & STATUS_TRANSPORT > 0): msg += ", transport"
+				if(result[0] & STATUS_GETOFF > 0): 
+					msg += ", Bye!"
+				else:
+					msg +=". Welcome!"
+				screen.cardtagScreen(Stations[currentStation], result[1], busNo,
+					True, msg)
+				time.sleep(1)
+
+
+			screen.runScreen(Stations[currentStation], busNo)
+
+
+		else: time.sleep(0.1)

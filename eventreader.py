@@ -1,10 +1,8 @@
 
-screenEvent = open('screenEvents.bin','rb')
-buttonEvent = open('buttonEvents.bin','rb')
 
-prevButtonState = []
-buttonDown 		= []
-buttonUp 		= []
+prevButtonState = [0]*7
+buttonDown 		= [0]*7
+buttonUp 		= [0]*7
 touchDown		= 0
 touchUp			= 0
 prevScreenState = 0
@@ -19,13 +17,15 @@ class Buttons:
 	VOLUMEDOWN	= 6
 
 
+buttonEvent = open('buttonEvents.bin','rb')
+screenEvent = open('screenEvents.bin','rb')
 
 def getButtonState():
 	buttonEvent.seek(0)
 	c = buttonEvent.read(7)
 	if(len(c) < 7):
 		return [-1]
-	return [state for state in c]
+	return [ord(state) for state in c]
 
 def isButtonDown(btn_id):
 	if(btn_id < 0 or btn_id > 6):
@@ -45,11 +45,11 @@ def isButtonPressed(btn_id):
 	return state[btn_id] == 1
 
 def updateButtonState():
-	buttonEvent.seek(0)
-	c = buttonEvent.read(7)
-	if(len(c) < 7):
-		return -1
-	currentButtonState = [state for state in c]
+
+	global prevButtonState
+	global buttonDown
+	global buttonUp
+	currentButtonState = getButtonState()
 	for i in range(7):
 		if(prevButtonState[i] < currentButtonState[i]):
 			buttonDown[i] = 1
@@ -60,8 +60,8 @@ def updateButtonState():
 		else:
 			buttonUp[i] = buttonDown[i] = 0
 
-
 	prevButtonState = currentButtonState
+	
 	return 0
 
 def getScreenState():
@@ -86,6 +86,9 @@ def isTouchUp():
 
 
 def updateScreenState():
+	global prevScreenState
+	global touchUp
+	global touchDown
 	currentScreenState = getScreenState()
 	if(currentScreenState[0] < 0):
 		return -1
