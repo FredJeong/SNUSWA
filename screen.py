@@ -35,7 +35,7 @@ def finishScreen():
 def busNumScreen(busnum1, busnum2, busnum3, busnum4):
 	basicSet()
 	vcs.write(45, 10,"select Bus number")
-	vcs.write(35, 20, "Select buss number button")
+	vcs.write(35, 20, "Select bus number button")
 	
 	drawButtonStr(busnum1, busnum2, busnum3, busnum4)
 	drawButtonRect()
@@ -71,12 +71,13 @@ def runScreen(busStop, busnum):
 	
 	timeScreen()
 	
-def cardTagScreen(busStop, fee, busnum, error=False, errorMsg="error"):
+def cardTagScreen(busStop, fee, deposit, busnum, error=False, errorMsg="error"):
 
 	basicSet()
-	vcs.write(43, 10, "run at \""+str(busStop)+"\""+"("+str(busnum)+")")
-	vcs.write(40, 20, "the card is tagging")
-	vcs.write(40, 25, "fee   :   " + str(fee))
+	vcs.write(43, 10, "Running on \""+str(busStop)+"\" "+"("+str(busnum)+")")
+	vcs.write(40, 20, "Card is tagged")
+	vcs.write(40, 25, "fee     : %6d" % fee)
+	vcs.write(40, 26, "Deposit : %6d" % deposit)
 	
 	if(error==True): errorScreen(errorMsg)
 	

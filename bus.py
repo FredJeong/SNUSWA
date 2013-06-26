@@ -166,12 +166,19 @@ def isTransport(record, busNo):
 def getUserType(header):
 	return header[0] & 0x3
 
-def isReTagged(record, busNo, stationID):
+def isReTaggedOnboard(record, busNo, stationID):
 	if(record[13] != stationID or busNo != unpackData(record)[0:6].strip()): return False
 	if(record[6] != 0xff): return False
 	onTime = (record[3] << 16) + (record[4] << 8) + record[5]
 	diff = (elapsedSecond() - onTime) % 86400
-	if(diff < 3600): return True
+	if(diff < 300): return True
+	return False
+
+def isReTaggedOffboard(record, busNo, stationID):
+	if(record[14] != stationID or busNo != unpackData(record)[0:6].strip()): return False
+	offTime = (record[19] << 16) + (record[20] << 8) + record[21]
+	diff = (elapsedSecond() - onTime) % 86400
+	if(diff < 300): return True
 	return False
 
 #precondition : not isRetagged()
@@ -187,6 +194,17 @@ def tagged(busNo, stationID):
 
 	header = blockBuffer[BLOCK_HEADER]
 
+	if(header == 0):
+		for i in range(3):
+			header = readBlock(BLOCK_HEADER)
+			if(header[0] != ERROR_COMM):
+				header = header[1:]
+				break
+	if(header[0] == ERROR_COMM):
+		return ERROR_COMM
+
+
+
 	vector = getTransportVector(header)
 
 	numTransport = 0
@@ -201,7 +219,10 @@ def tagged(busNo, stationID):
 		lastRecord = getTransportRecord(numTransport - 1)
 	currentRecord = getTransportRecord(numTransport)
 
-	if(isReTagged(currentRecord, busNo, stationID)): 
+	if(isReTaggedOnboard(currentRecord, busNo, stationID)): 
+		print "\n<Retagged>\n"
+		return ERROR_RETAG
+	if(isReTaggedOffboard(lastRecord, busNo, stationID)): 
 		print "\n<Retagged>\n"
 		return ERROR_RETAG
 	if(isOffBoard(currentRecord, busNo, stationID)): 
@@ -401,7 +422,9 @@ def getFileName():
 	return "trans_%04d_%02d%02d_%02d%02d%02d" % (now.tm_year, now.tm_mon, now.tm_mday,
 		now.tm_hour, now.tm_min, now.tm_sec)
 
-
+def getValueFromBlock(block):
+	packed = ''.join([chr(c) for c in block[0:4]])
+	return struct.unpack('I',packed)[0]
 
 
 def drive(busNo = busNumber, stationID = 1):
@@ -507,7 +530,7 @@ def drive(busNo = busNumber, stationID = 1):
 
 		if(isTagged()[0] == STATUS_OK):
 			rfid.flush()
-			screen.cardTagScreen(Stations[currentStation], 0, busNo,
+			screen.cardTagScreen(Stations[currentStation], 0, 0, busNo,
 				True, "Tagging...Wait")
 
 			for sectorIdx in SECTORS:
@@ -524,13 +547,21 @@ def drive(busNo = busNumber, stationID = 1):
 			for blockIdx in BLOCKS:
 				sectorIdx = int(blockIdx / 4)
 				offset = blockIdx % 4
+				print "Sector[%d][%d] => Block[%d]" % (sectorIdx, offset, blockIdx)
 				blockBuffer[blockIdx] = backup[sectorIdx][offset*16:offset*16+16]
+
+			value = 0
+			if(blockBuffer[BLOCK_MONEY] !=0):
+				value = getValueFromBlock(blockBuffer[BLOCK_MONEY])
+			screen.cardTagScreen(Stations[currentStation], 0, value, busNo,
+				True, "Tagging...Wait")
+
 
 			result = tagged(busNo, currentStation)
 			if(result == ERROR_COMM):
 				errorFlag = result
 				print "\n<ERROR. Try rolling-back>\n"
-				screen.cardTagScreen(Stations[currentStation], 0, busNo,
+				screen.cardTagScreen(Stations[currentStation], 0, value, busNo,
 					True, "ERROR. Try rolling-back")
 				for sectorIdx in SECTORS:
 					for i in range(3):
@@ -540,7 +571,7 @@ def drive(busNo = busNumber, stationID = 1):
 					packOnboardData("000000",secondFormat(elapsedSecond()), -result,0))
 			elif(result == ERROR_NOMONEY):
 				errorFlag = result
-				screen.cardTagScreen(Stations[currentStation], 0, busNo,
+				screen.cardTagScreen(Stations[currentStation], 0, value, busNo,
 					True, "Not enough minerals.")
 				print "\n<Not enough minerals.>\n"
 				writeRecordToFile(ERROR_CARDNO, 
@@ -548,7 +579,7 @@ def drive(busNo = busNumber, stationID = 1):
 				time.sleep(2)
 			elif(result == ERROR_RETAG):
 				errorFlag = result
-				screen.cardTagScreen(Stations[currentStation], 0, busNo,
+				screen.cardTagScreen(Stations[currentStation], 0, value, busNo,
 					True, "Retagged.")
 				print "\n<Retagged.>\n"
 				writeRecordToFile(ERROR_CARDNO, 
@@ -565,8 +596,8 @@ def drive(busNo = busNumber, stationID = 1):
 					msg += ", Bye!"
 				else:
 					msg +=". Welcome!"
-				screen.cardTagScreen(Stations[currentStation], result[1], busNo,
-					True, msg)
+				screen.cardTagScreen(Stations[currentStation], result[1], value - result[1],
+					busNo, True, msg)
 				print "\n<" + msg + ">\n"
 				time.sleep(2)
 
@@ -576,7 +607,7 @@ def drive(busNo = busNumber, stationID = 1):
 		if(int(time.time()) - prevTime > 300):
 			prevTime = int(time.time())
 			outFile.close()
-			outFile = open(getFileName, "w")
+			outFile = open(getFileName(), "w")
 
 
 		time.sleep(0.1)
